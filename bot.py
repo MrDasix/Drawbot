@@ -1,4 +1,4 @@
-import numpy as np
+import pickle
 from datetime import datetime
 
 import discord
@@ -30,33 +30,68 @@ class MyClient(discord.Client):
     def get_new_word(self):
         self.word = get_random_word()
 
-    def save_ranking(self):
-        np.save('ranking.npy', self.ranking)
+    def save_info(self):
+        self.fullInfo = {
+                "word": self.word,
+                "ranking": self.ranking,
+                "channel_id": self.channel_id,
+                "entries":self.entries
+            }
+        with open('info.pkl', 'wb') as f:
+            pickle.dump(self.fullInfo, f)
     
-    def load_ranking(self):
-        if os.path.exists('ranking.npy'):
-            return np.load('ranking.npy',allow_pickle='TRUE').item()
+    def load_info(self):
+        if os.path.exists('info.pkl'):
+            with open('info.pkl', 'rb') as f:
+                return pickle.load(f)
         else:
-            return {}
+            return {
+                "word":get_random_word(),
+                "ranking":{},
+                "channel_id":None,
+                "entries":{}
+            }
 
-    def assignChannel(self, channel):
+    def assign_channel(self, channel):
         self.channel_id = channel.id
 
-    def evaluate():
-        for entry_author in self.entries[datetime.today]:
-            total = 0
-            for react in self.entries[datetime.today][entry_author][0].reactions:
-                total += emoji_map[str(react)] * react.count
+    async def evaluate(self):
+        today = datetime.today().strftime("%Y-%m-%d")
 
-            self.ranking[entry_author] += total
+        chn = await self.fetch_channel(self.channel_id)
+
+        for entry_author in self.entries[today]:
+            total = 0
+
+            msg = await chn.fetch_message(self.entries[today][entry_author][0])
+
+            for react in msg.reactions:
+                if str(react) in emoji_map:
+                    total += emoji_map[str(react)] * react.count
+
+            if entry_author in self.ranking:
+                self.ranking[entry_author] += total
+            else:
+                self.ranking[entry_author] = total
             
-        self.save_ranking()
+        self.save_info()
+
+    def get_ranking(self):
+        ret = ""
+        for k in self.ranking:
+            ret += str(k)+": "+str(self.ranking[k])+str(os.linesep) 
+
+        return ret
 
     async def on_ready(self):
-        self.word = get_random_word()
-        self.ranking = self.load_ranking()
-        self.channel_id = None
-        self.entries = {datetime.today:{}}
+        self.fullInfo = self.load_info()
+
+        print(self.fullInfo)
+
+        self.word = self.fullInfo["word"]
+        self.ranking = self.fullInfo["ranking"]
+        self.channel_id = self.fullInfo["channel_id"]
+        self.entries = self.fullInfo["entries"]
 
         print('Logged on as {0}!'.format(self.user))
 
@@ -71,15 +106,24 @@ class MyClient(discord.Client):
             if text == "$word":
                 await message.channel.send(self.word)
             elif text == "$newword":
+                await self.evaluate()
                 self.get_new_word()
                 await message.channel.send(self.word)
             elif text == "$assignchannel":
-                assignChannel(message.channel)
-        
+                self.assign_channel(message.channel)
+            elif text == "$ranking":
+                await message.channel.send(self.get_ranking())
+
         #Entry
         if message.channel.id == self.channel_id:
             if len(message.attachments) > 0:
-                self.entries[datetime.today][message.author.discriminator] = (message, message.attachments.url)
+                print("Added entry",message.attachments[0].url)
+                today = datetime.today().strftime("%Y-%m-%d")
+
+                if today not in self.entries:
+                    self.entries[today] = {}
+
+                self.entries[today][message.author.name] = (message.id, message.attachments[0].url)
 
 
 if __name__ == "__main__":
